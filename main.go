@@ -61,14 +61,17 @@ func start() error {
 }
 
 func readConfig() (*common.Config, error) {
-	homePathStr := os.Getenv("HOME")
+	homePathStr, _ := os.UserHomeDir()
 	defaultConfigPath := filepath.Join(homePathStr, ".config", "xray/helper.yaml")
 	var configPath string
 	flag.StringVar(&configPath, "config", defaultConfigPath, "config file path")
 
 	log.Infof("config path is '%v'", configPath)
-
-	file, err := os.Open(configPath)
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(configPath, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		return nil, err
 	}
