@@ -24,20 +24,26 @@ func (c *Config) Check() error {
 }
 
 type XrayConfig struct {
-	Address         string   `json:"address" yaml:"address"`
-	ApiPort         uint16   `json:"apiPort" yaml:"apiPort"`
-	HttpPort        uint16   `json:"httpPort" yaml:"httpPort"`
-	SocksPort       uint16   `json:"socksPort" yaml:"socksPort"`
-	TestPort        uint16   `json:"testPort" yaml:"testPort"`
-	XrayExeDir      string   `json:"xrayExeDir" yaml:"xrayExeDir"`
-	XrayConfigDir   string   `json:"xrayConfigDir" yaml:"xrayConfigDir"`
-	DomainWhitelist []string `json:"domainWhitelist" yaml:"domainWhitelist"`
-	DomainBlacklist []string `json:"domainBlacklist" yaml:"domainBlacklist"`
+	Address           string   `json:"address" yaml:"address"`
+	ApiPort           uint16   `json:"apiPort" yaml:"apiPort"`
+	HttpPort          uint16   `json:"httpPort" yaml:"httpPort"`
+	SocksPort         uint16   `json:"socksPort" yaml:"socksPort"`
+	TestPort          uint16   `json:"testPort" yaml:"testPort"`
+	XrayExeDir        string   `json:"xrayExeDir" yaml:"xrayExeDir"`
+	XrayConfigDir     string   `json:"xrayConfigDir" yaml:"xrayConfigDir"`
+	DomainWhitelist   []string `json:"domainWhitelist" yaml:"domainWhitelist"`
+	DomainBlacklist   []string `json:"domainBlacklist" yaml:"domainBlacklist"`
+	SubscribeUrl      string   `json:"subscribeUrl" yaml:"subscribeUrl"`
+	SubscribeRetryNum uint16   `json:"subscribeRetryNum" yaml:"subscribeRetryNum"`
 }
 
 func (c *XrayConfig) Check() error {
 	if strings.TrimSpace(c.Address) == "" {
 		c.Address = "127.0.0.1"
+	}
+
+	if c.SubscribeRetryNum == 0 {
+		c.SubscribeRetryNum = 3
 	}
 
 	if strings.TrimSpace(c.Address) == "" {
@@ -61,16 +67,10 @@ func (c *XrayConfig) Check() error {
 }
 
 type ServerConfig struct {
-	Port              uint16 `json:"port" yaml:"port"`
-	SubscribeUrl      string `json:"subscribeUrl" yaml:"subscribeUrl"`
-	SubscribeRetryNum uint16 `json:"subscribeRetryNum" yaml:"subscribeRetryNum"`
+	Port uint16 `json:"port" yaml:"port"`
 }
 
 func (c *ServerConfig) Check() error {
-
-	if c.SubscribeRetryNum == 0 {
-		c.SubscribeRetryNum = 3
-	}
 
 	if c.Port == 0 {
 		c.Port = 20909

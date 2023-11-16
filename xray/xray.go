@@ -27,9 +27,18 @@ func (app *XrayApp) Start() error {
 		return err
 	}
 
+	err = app.Run()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (app *XrayApp) Run() error {
 	xrayExe := filepath.Join(app.config.XrayExeDir, "xray")
 	cmd := exec.Command(xrayExe, "run", "-confdir", app.config.XrayConfigDir)
-	err = cmd.Start()
+	err := cmd.Start()
 	if err != nil {
 		return err
 	}

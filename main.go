@@ -38,7 +38,7 @@ func start() error {
 	}
 	errors := make(chan error)
 
-	go func(c chan error) {
+	go func(c chan<- error) {
 		xrayApp := xray.NewXrayApp(config.XrayConfig)
 		e := xrayApp.Start()
 		if e != nil {
@@ -46,7 +46,7 @@ func start() error {
 		}
 	}(errors)
 
-	go func(c chan error) {
+	go func(c chan<- error) {
 		sv := server.NewServer(config.ServerConfig)
 		e := sv.Start()
 		if e != nil {
