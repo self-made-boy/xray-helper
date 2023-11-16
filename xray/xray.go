@@ -3,142 +3,82 @@ package xray
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"text/template"
 	"xray-helper/common"
 )
 
-var XrayConfig common.XrayConfig
+var CurrentXrayApp *XrayApp
 
 type XrayApp struct {
-	config common.XrayConfig
+	config  common.XrayConfig
+	Process *os.Process
 }
 
 func NewXrayApp(config common.XrayConfig) *XrayApp {
-	XrayConfig = config
-	return &XrayApp{config: config}
+	CurrentXrayApp = &XrayApp{config: config}
+	return CurrentXrayApp
 }
 
 func (app *XrayApp) Start() error {
+	err := app.InitConfig()
+	if err != nil {
+		return err
+	}
 
-	return nil
-}
+	xrayExe := filepath.Join(app.config.XrayExeDir, "xray")
+	cmd := exec.Command(xrayExe, "run", "-confdir", app.config.XrayConfigDir)
+	err = cmd.Start()
+	if err != nil {
+		return err
+	}
+	app.Process = cmd.Process
 
-func (app *XrayApp) InitConfig() error {
-
-	return nil
-}
-
-func (app *XrayApp) InitProxyOutboundConfig() error {
-	data := `
-{
-    "routing": {
-        "domainStrategy": "AsIs",
-        "domainMatcher": "hybrid",
-        "rules": [
-            {
-                "type": "field",
-                "inboundTag": ["api"],
-                "outboundTag": "api"
-            },
-            {
-                "type": "field",
-                "domain": [
-                    "domain:uipus.cn",
-                    "domain:fltrp.com",
-                    "domain:baidu.com",
-                    "domain:qq.com",
-                    "domain:zhihu.com",
-                    "geosite:apple-cn",
-                    "geosite:google-cn",
-                    "geosite:cn"
-                ],
-                "ip": [
-                    "0.0.0.0/8",
-                    "10.0.0.0/8",
-                    "172.16.0.0/12",
-                    "192.168.0.0/16",
-                    "114.114.114.114/32",
-                    "fc00::/7",
-                    "fe80::/10",
-                    "geoip:private",
-                    "geoip:cn"
-                ],
-                
-                "network": "tcp",
-                "source": [],
-                "user": [],
-                "inboundTag": [],
-                "protocol": [],
-                "attrs": {
-                },
-                "outboundTag": "direct"
-            },
-            {
-                "type": "field",
-                "domain": [
-                    "geosite:category-ads",
-                    "geosite:category-ads-all"
-                ],
-                "ip": [],
-                "network": "tcp,udp",
-                "source": [],
-                "user": [],
-                "inboundTag": [],
-                "protocol": [],
-                "attrs": {
-                },
-                "outboundTag": "blocked"
-            },
-            {
-                "type": "field",
-                "domain": [
-                    "geosite:geolocation-!cn"
-                ],
-                "ip": [
-                    "geoip:!cn"
-                ],
-                
-                "network": "tcp",
-                "source": [],
-                "user": [],
-                "inboundTag": [],
-                "protocol": [],
-                "attrs": {
-                },
-                "outboundTag": "proxy"
-            },
-            {
-                "type": "field",
-                "domain": [],
-                "ip": [],
-                "network": "tcp",
-                "source": [],
-                "user": [],
-                "inboundTag": [],
-                "protocol": [],
-                "attrs": {
-                    ":method": "GET",
-                    ":path": "/test"
-                },
-                "outboundTag": "proxy-test"
-            }
-
-        ],
-        "balancers": []
-    }
-}
-`
-	fileName := "006proxy_outbound.json"
-	filePath := filepath.Join(app.config.XrayConfigDir, fileName)
-	err := writeToFile(data, filePath)
+	err = cmd.Wait()
 	if err != nil {
 		return err
 	}
 	return nil
 }
+
+func (app *XrayApp) InitConfig() error {
+	err := app.InitApiConfig()
+	if err != nil {
+		return err
+	}
+	err = app.InitLogConfig()
+	if err != nil {
+		return err
+	}
+
+	err = app.InitDnsConfig()
+	if err != nil {
+		return err
+	}
+
+	err = app.InitPolicyConfig()
+	if err != nil {
+		return err
+	}
+
+	err = app.InitInboundConfig()
+	if err != nil {
+		return err
+	}
+	err = app.InitBaseOutboundConfig()
+	if err != nil {
+		return err
+	}
+	err = app.InitRouteConfig()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (app *XrayApp) InitRouteConfig() error {
-	data := `
+	templateText := `
 {
     "routing": {
         "domainStrategy": "AsIs",
@@ -146,17 +86,17 @@ func (app *XrayApp) InitRouteConfig() error {
         "rules": [
             {
                 "type": "field",
-                "inboundTag": ["api"],
+                "inboundTag": [
+                    "api"
+                ],
                 "outboundTag": "api"
             },
             {
                 "type": "field",
                 "domain": [
-                    "domain:uipus.cn",
-                    "domain:fltrp.com",
-                    "domain:baidu.com",
-                    "domain:qq.com",
-                    "domain:zhihu.com",
+{{range .DomainWhitelist}}
+                    "{{.}}",
+{{end}}
                     "geosite:apple-cn",
                     "geosite:google-cn",
                     "geosite:cn"
@@ -172,14 +112,12 @@ func (app *XrayApp) InitRouteConfig() error {
                     "geoip:private",
                     "geoip:cn"
                 ],
-                
                 "network": "tcp",
                 "source": [],
                 "user": [],
-                "inboundTag": [],
+                "inboundTag": ["inbounds-socks","inbounds-http"],
                 "protocol": [],
-                "attrs": {
-                },
+                "attrs": {},
                 "outboundTag": "direct"
             },
             {
@@ -194,27 +132,27 @@ func (app *XrayApp) InitRouteConfig() error {
                 "user": [],
                 "inboundTag": [],
                 "protocol": [],
-                "attrs": {
-                },
+                "attrs": {},
                 "outboundTag": "blocked"
             },
             {
                 "type": "field",
                 "domain": [
+{{range .DomainBlacklist}}
+                    "{{.}}",
+{{end}}
                     "geosite:geolocation-!cn"
                 ],
                 "ip": [
                     "geoip:!cn"
                 ],
-                
                 "network": "tcp",
                 "source": [],
                 "user": [],
-                "inboundTag": [],
+                "inboundTag": ["inbounds-socks","inbounds-http"],
                 "protocol": [],
-                "attrs": {
-                },
-                "outboundTag": "proxy"
+                "attrs": {},
+                "balancerTag": "proxy-balancer"
             },
             {
                 "type": "field",
@@ -223,23 +161,46 @@ func (app *XrayApp) InitRouteConfig() error {
                 "network": "tcp",
                 "source": [],
                 "user": [],
-                "inboundTag": [],
+                "inboundTag": ["inbounds-test"],
                 "protocol": [],
-                "attrs": {
-                    ":method": "GET",
-                    ":path": "/test"
-                },
-                "outboundTag": "proxy-test"
+                "attrs": {},
+                "balancerTag": "test-balancer"
             }
-
         ],
-        "balancers": []
+        "balancers": [
+            {
+                "tag": "proxy-balancer",
+                "selector": [
+                    "proxy"
+                ]
+            },
+            {
+                "tag": "test-balancer",
+                "selector": [
+                    "test"
+                ]
+            }
+        ]
     }
 }
 `
+	t := template.New("route template")
+	_, err := t.Parse(templateText)
+	if err != nil {
+		return err
+	}
+
+	config := app.config
+	var buf bytes.Buffer
+	err = t.Execute(&buf, config)
+	if err != nil {
+		return err
+	}
+
+	data := buf.String()
 	fileName := "006route.json"
 	filePath := filepath.Join(app.config.XrayConfigDir, fileName)
-	err := writeToFile(data, filePath)
+	err = writeToFile(data, filePath)
 	if err != nil {
 		return err
 	}

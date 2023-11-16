@@ -24,13 +24,15 @@ func (c *Config) Check() error {
 }
 
 type XrayConfig struct {
-	Address       string `json:"address" yaml:"address"`
-	ApiPort       uint16 `json:"apiPort" yaml:"apiPort"`
-	HttpPort      uint16 `json:"httpPort" yaml:"httpPort"`
-	SocksPort     uint16 `json:"socksPort" yaml:"socksPort"`
-	TestPort      uint16 `json:"testPort" yaml:"testPort"`
-	XrayExeDir    string `json:"xrayExeDir" yaml:"xrayExeDir"`
-	XrayConfigDir string `json:"xrayConfigDir" yaml:"xrayConfigDir"`
+	Address         string   `json:"address" yaml:"address"`
+	ApiPort         uint16   `json:"apiPort" yaml:"apiPort"`
+	HttpPort        uint16   `json:"httpPort" yaml:"httpPort"`
+	SocksPort       uint16   `json:"socksPort" yaml:"socksPort"`
+	TestPort        uint16   `json:"testPort" yaml:"testPort"`
+	XrayExeDir      string   `json:"xrayExeDir" yaml:"xrayExeDir"`
+	XrayConfigDir   string   `json:"xrayConfigDir" yaml:"xrayConfigDir"`
+	DomainWhitelist []string `json:"domainWhitelist" yaml:"domainWhitelist"`
+	DomainBlacklist []string `json:"domainBlacklist" yaml:"domainBlacklist"`
 }
 
 func (c *XrayConfig) Check() error {

@@ -39,10 +39,9 @@ type V2Ray struct {
 	Protocol      string `json:"protocol"`
 }
 
-func (v *V2Ray) TransferToOutbound(tag string) (OutboundObject, error) {
-	if len(strings.TrimSpace(tag)) == 0 {
-		tag = v.GetTag()
-	}
+func (v *V2Ray) TransferToOutbound(prefix string) (OutboundObject, error) {
+
+	tag := v.GetTag(prefix)
 	core := OutboundObject{
 		Tag:      tag,
 		Protocol: v.Protocol,
@@ -229,9 +228,9 @@ func (v *V2Ray) TransferToOutbound(tag string) (OutboundObject, error) {
 
 }
 
-func (v *V2Ray) GetTag() string {
+func (v *V2Ray) GetTag(prefix string) string {
 
-	return "proxy-" + v.ID
+	return prefix + "-" + v.ID
 }
 
 func ParseVmessURL(vmess string) (data *V2Ray, err error) {
