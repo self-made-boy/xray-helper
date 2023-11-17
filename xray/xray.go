@@ -496,8 +496,15 @@ func (app *XrayApp) RemoveFiles(prefix string) error {
 
 func (app *XrayApp) UpdateOutbound(v2rays []*V2Ray) error {
 
-	prefix := "009_test_"
-	err := app.RemoveFiles(prefix)
+	prefixTest := "009_test_"
+
+	prefixProxy := "009_proxy_"
+	err := app.RemoveFiles(prefixTest)
+	if err != nil {
+		return err
+	}
+
+	err = app.RemoveFiles(prefixProxy)
 	if err != nil {
 		return err
 	}
@@ -512,7 +519,7 @@ func (app *XrayApp) UpdateOutbound(v2rays []*V2Ray) error {
 			log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 			continue
 		}
-		filePath := filepath.Join(app.config.XrayConfigDir, prefix+v.ID+".json")
+		filePath := filepath.Join(app.config.XrayConfigDir, prefixTest+v.ID+".json")
 		err = writeToFile(string(data), filePath)
 		if err != nil {
 			log.Errorf("UpdateOutbound write to file failed, error: %v", err)
