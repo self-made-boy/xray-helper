@@ -2,9 +2,14 @@ package xray
 
 import (
 	"bytes"
+	"encoding/json"
+	log "github.com/golang/glog"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"text/template"
 	"xray-helper/common"
 )
@@ -14,6 +19,7 @@ var CurrentXrayApp *XrayApp
 type XrayApp struct {
 	config  common.XrayConfig
 	Process *os.Process
+	V2Rays  []*V2Ray
 }
 
 func NewXrayApp(config common.XrayConfig) *XrayApp {
@@ -23,6 +29,10 @@ func NewXrayApp(config common.XrayConfig) *XrayApp {
 
 func (app *XrayApp) Start() error {
 	err := app.InitConfig()
+	if err != nil {
+		return err
+	}
+	err = app.Subscribe(false)
 	if err != nil {
 		return err
 	}
@@ -162,18 +172,6 @@ func (app *XrayApp) InitRouteConfig() error {
                 "protocol": [],
                 "attrs": {},
                 "balancerTag": "proxy-balancer"
-            },
-            {
-                "type": "field",
-                "domain": [],
-                "ip": [],
-                "network": "tcp",
-                "source": [],
-                "user": [],
-                "inboundTag": ["inbounds-test"],
-                "protocol": [],
-                "attrs": {},
-                "balancerTag": "test-balancer"
             }
         ],
         "balancers": [
@@ -181,12 +179,6 @@ func (app *XrayApp) InitRouteConfig() error {
                 "tag": "proxy-balancer",
                 "selector": [
                     "proxy"
-                ]
-            },
-            {
-                "tag": "test-balancer",
-                "selector": [
-                    "test"
                 ]
             }
         ]
@@ -441,6 +433,185 @@ func (app *XrayApp) InitApiConfig() error {
 		return err
 	}
 	return nil
+}
+
+func (app *XrayApp) Subscribe(isProxy bool) error {
+
+	subscribeUrl := app.config.SubscribeUrl
+	proxyUrl := "http://127.0.0.1:" + strconv.Itoa(int(app.config.TestPort))
+	if !isProxy {
+		proxyUrl = ""
+	}
+	subscribeDecodeText, err := Subscribe(subscribeUrl, proxyUrl)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(subscribeDecodeText, "\n")
+
+	var v2rays []*V2Ray
+	for _, line := range lines {
+		v2rayObj, err := ParseVmessURL(line)
+		if err != nil {
+			return err
+		}
+		v2rays = append(v2rays, v2rayObj)
+	}
+	app.V2Rays = v2rays
+	err = app.UpdateRoutingRule(v2rays)
+	if err != nil {
+		return err
+	}
+
+	err = app.UpdateOutbound(v2rays)
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func (app *XrayApp) RemoveFiles(prefix string) error {
+	dir := app.config.XrayConfigDir
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	// 遍历文件/目录
+	for _, f := range files {
+		// 检查文件名是否以给定的前缀开始
+		if strings.HasPrefix(f.Name(), prefix) {
+			// 构造完整的文件路径
+			path := filepath.Join(dir, f.Name())
+			// 删除文件
+			if err := os.Remove(path); err != nil {
+				log.Errorf("remove path '%v' failed,error: %v", path, err)
+				continue
+			}
+		}
+	}
+	return nil
+}
+
+func (app *XrayApp) UpdateOutbound(v2rays []*V2Ray) error {
+
+	prefix := "009_test_"
+	err := app.RemoveFiles(prefix)
+	if err != nil {
+		return err
+	}
+
+	for _, v := range v2rays {
+		outbound, err := v.TransferToOutbound("test_")
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(outbound)
+		if err != nil {
+			log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
+			continue
+		}
+		filePath := filepath.Join(app.config.XrayConfigDir, prefix+v.ID+".json")
+		err = writeToFile(string(data), filePath)
+		if err != nil {
+			log.Errorf("UpdateOutbound write to file failed, error: %v", err)
+			continue
+		}
+	}
+	return err
+}
+
+// 更新路由规则
+func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
+	fileName := "006route.json"
+	filePath := filepath.Join(app.config.XrayConfigDir, fileName)
+	content := readFromFile(filePath)
+	if content == "" {
+		err := app.InitRouteConfig()
+		if err != nil {
+			return err
+		}
+		content = readFromFile(filePath)
+	}
+	var result map[string]interface{}
+
+	err := json.Unmarshal([]byte(content), &result)
+	if err != nil {
+		return err
+	}
+	rules := result["routing"].(map[string]interface{})["rules"].([]map[string]interface{})
+
+	var finalRules []map[string]interface{}
+	for _, rule := range rules {
+
+		tag, ok := rule["outboundTag"]
+		if !ok || !strings.HasPrefix(tag.(string), "test_") {
+			finalRules = append(finalRules, rule)
+		}
+	}
+
+	templateText := `
+{
+    "type": "field",
+    "domain": [],
+    "ip": [],
+    "network": "tcp",
+    "source": [],
+    "user": [],
+    "inboundTag": ["inbounds-test"],
+    "protocol": [],
+    "attrs": {
+        ":method": "GET",
+        ":path": "/test/{{.}}"
+    },
+    "outboundTag": "test_{{.}}"
+}
+`
+	t, err := template.New("rule update").Parse(templateText)
+	if err != nil {
+		return err
+	}
+	for _, v := range v2rays {
+		var buf bytes.Buffer
+		err := t.Execute(&buf, v.ID)
+		if err != nil {
+			log.Errorf("UpdateRoutingRule template execute failed,rule id: %v,error: %v", v.ID, err)
+			continue
+		}
+		var r map[string]interface{}
+		err = json.Unmarshal(buf.Bytes(), &r)
+		if err != nil {
+			log.Errorf("UpdateRoutingRule json unmarshal failed,rule id: %v,error: %v", v.ID, err)
+			continue
+		}
+		finalRules = append(finalRules, r)
+	}
+
+	result["routing"].(map[string]interface{})["rules"] = finalRules
+
+	marshal, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	err = writeToFile(string(marshal), filePath)
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
+func readFromFile(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return ""
+	}
+	return string(content)
 }
 
 func writeToFile(data string, path string) error {
