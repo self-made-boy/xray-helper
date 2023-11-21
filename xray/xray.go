@@ -37,6 +37,21 @@ func NewXrayApp(config common.XrayConfig) *XrayApp {
 }
 
 func (app *XrayApp) Start() error {
+	err := app.DoStart()
+	if err != nil {
+		return err
+	}
+	err = app.TestAll()
+	if err != nil {
+		log.Errorf("test all config failed %v", err)
+	} else {
+		app.Restart(false)
+	}
+
+	return nil
+}
+
+func (app *XrayApp) DoStart() error {
 	err := app.InitConfig()
 	if err != nil {
 		return err
@@ -50,14 +65,6 @@ func (app *XrayApp) Start() error {
 	if err != nil {
 		return err
 	}
-
-	err = app.TestAll()
-	if err != nil {
-		log.Errorf("test all config failed %v", err)
-	} else {
-		app.Restart()
-	}
-
 	return nil
 }
 
@@ -548,6 +555,9 @@ func (app *XrayApp) InitApiConfig() error {
 func (app *XrayApp) Subscribe(isProxy bool) error {
 
 	subscribeUrl := app.config.SubscribeUrl
+	if subscribeUrl == "" {
+		return nil
+	}
 	proxyUrl := "http://127.0.0.1:" + strconv.Itoa(int(app.config.HttpPort))
 	if !isProxy {
 		proxyUrl = ""
@@ -556,6 +566,7 @@ func (app *XrayApp) Subscribe(isProxy bool) error {
 	if err != nil {
 		return err
 	}
+	subscribeDecodeText = strings.TrimSpace(subscribeDecodeText)
 	lines := strings.Split(subscribeDecodeText, "\n")
 
 	var v2rays []*V2Ray
@@ -583,6 +594,9 @@ func (app *XrayApp) Subscribe(isProxy bool) error {
 
 func (app *XrayApp) RemoveFiles(prefix string) error {
 	dir := app.config.XrayConfigDir
+	if dir == "" {
+		dir = "."
+	}
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -696,14 +710,15 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 	if err != nil {
 		return err
 	}
-	rules := result["routing"].(map[string]interface{})["rules"].([]map[string]interface{})
+	rules := result["routing"].(map[string]interface{})["rules"].([]interface{})
 
 	var finalRules []map[string]interface{}
 	for _, rule := range rules {
 
-		tag, ok := rule["outboundTag"]
+		rule1 := rule.(map[string]interface{})
+		tag, ok := rule1["outboundTag"]
 		if !ok || !strings.HasPrefix(tag.(string), "test_") {
-			finalRules = append(finalRules, rule)
+			finalRules = append(finalRules, rule1)
 		}
 	}
 
@@ -758,18 +773,42 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 
 }
 
-func (app *XrayApp) Restart() error {
+func (app *XrayApp) Restart(withInit bool) error {
 	if app.Process != nil {
 		err := app.Process.Kill()
 		if err != nil {
 			log.Errorf("process kill filed %d", app.Process.Pid)
 		}
 	}
-	err := app.Run()
-	if err != nil {
-		return err
+
+	if !withInit {
+		err := app.Run()
+		if err != nil {
+			return err
+		}
+		return nil
+	} else {
+		config, err := common.ReadConfig()
+		if err != nil {
+			return err
+		}
+		app.config = config.XrayConfig
+		err = app.DoStart()
+		if err != nil {
+			return err
+		}
+		err = app.TestAll()
+		if err != nil {
+			return err
+		}
+		err = app.Restart(false)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
-	return nil
+
 }
 
 func readFromFile(path string) string {

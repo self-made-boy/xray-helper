@@ -3,10 +3,6 @@ package main
 import (
 	"flag"
 	log "github.com/golang/glog"
-	"gopkg.in/yaml.v2"
-	"io"
-	"os"
-	"path/filepath"
 	"xray-helper/common"
 	"xray-helper/server"
 	"xray-helper/xray"
@@ -32,7 +28,7 @@ func main() {
 }
 
 func start() error {
-	config, err := readConfig()
+	config, err := common.ReadConfig()
 	if err != nil {
 		return err
 	}
@@ -58,38 +54,4 @@ func start() error {
 	case e := <-errors:
 		return e
 	}
-}
-
-func readConfig() (*common.Config, error) {
-	homePathStr, _ := os.UserHomeDir()
-	defaultConfigPath := filepath.Join(homePathStr, ".config", "xray/helper.yaml")
-	var configPath string
-	flag.StringVar(&configPath, "config", defaultConfigPath, "config file path")
-
-	log.Infof("config path is '%v'", configPath)
-	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(configPath, os.O_CREATE|os.O_RDWR, 0666)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-
-	var config common.Config
-	err = yaml.Unmarshal(content, &config)
-	if err != nil {
-		return nil, err
-	}
-	err = config.Check()
-	if err != nil {
-		return nil, err
-	}
-	return &config, nil
 }

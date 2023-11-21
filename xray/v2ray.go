@@ -18,9 +18,9 @@ import (
 type V2Ray struct {
 	Ps            string `json:"ps"`
 	Add           string `json:"add"`
-	Port          string `json:"port"`
+	Port          int    `json:"port"`
 	ID            string `json:"id"`
-	Aid           string `json:"aid"`
+	Aid           int    `json:"aid"`
 	Security      string `json:"scy"`
 	Net           string `json:"net"`
 	Type          string `json:"type"`
@@ -55,11 +55,6 @@ func (v *V2Ray) TransferToOutbound(prefix string) (OutboundObject, error) {
 		Network: network,
 	}
 
-	var aid int
-	if _aid, err := strconv.Atoi(v.Aid); err == nil {
-		aid = _aid
-	}
-	port, _ := strconv.Atoi(v.Port)
 	security := v.Security
 	if security == "" {
 		security = "auto"
@@ -67,11 +62,11 @@ func (v *V2Ray) TransferToOutbound(prefix string) (OutboundObject, error) {
 	core.Settings.Vnext = []Vnext{
 		{
 			Address: v.Add,
-			Port:    port,
+			Port:    v.Port,
 			Users: []User{
 				{
 					ID:         id,
-					AlterID:    aid,
+					AlterID:    v.Aid,
 					Security:   security,
 					Encryption: "none",
 				},
@@ -278,21 +273,34 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		if aid == "" {
 			aid = q.Get("aid")
 		}
+		var aidNum int64
+		if aid != "" {
+			aidNum, err = strconv.ParseInt(aid, 10, 64)
+			if err != nil {
+				err = fmt.Errorf("unrecognized aid")
+				return
+			}
+		}
 		security := q.Get("scy")
 		if security == "" {
 			security = q.Get("security")
 		}
 		sni := q.Get("sni")
+		port, err := strconv.ParseInt(subMatch[3], 10, 64)
+		if err != nil {
+			err = fmt.Errorf("unrecognized port")
+			return nil, err
+		}
 		info = V2Ray{
 			ID:            subMatch[1],
 			Add:           subMatch[2],
-			Port:          subMatch[3],
+			Port:          int(port),
 			Ps:            ps,
 			Host:          obfsParam,
 			Path:          path,
 			SNI:           sni,
 			Net:           obfs,
-			Aid:           aid,
+			Aid:           int(aidNum),
 			Security:      security,
 			TLS:           map[string]string{"1": "tls"}[q.Get("tls")],
 			AllowInsecure: false,
@@ -317,15 +325,13 @@ func ParseVmessURL(vmess string) (data *V2Ray, err error) {
 		info.Path = info.Host
 		info.Host = ""
 	}
-	if info.Aid == "" {
-		info.Aid = "0"
-	}
+
 	info.Protocol = "vmess"
 	return &info, nil
 }
 
 func Subscribe(subscribeUrl string, proxyUrl string) (string, error) {
-	log.Infof("Subscribe starting '{}' with proxy '{}'", subscribeUrl, proxyUrl)
+	log.Infof("Subscribe starting '%s' with proxy '%s'", subscribeUrl, proxyUrl)
 	var client *http.Client
 	if len(strings.TrimSpace(proxyUrl)) == 0 {
 		client = http.DefaultClient
@@ -357,6 +363,6 @@ func Subscribe(subscribeUrl string, proxyUrl string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Infof("Subscribe starting '{}' with proxy '{}'; get result '{}'", subscribeUrl, proxyUrl, text)
+	log.Infof("Subscribe starting '%s' with proxy '%s'; get result '%s'", subscribeUrl, proxyUrl, text)
 	return text, nil
 }
