@@ -6,4 +6,5 @@ var routeMap = map[string]http.HandlerFunc{
 	"/AddOutbound":    AddOutbound,
 	"/RemoveOutbound": RemoveOutbound,
 	"/Refresh":        Refresh,
+	"/":               Root,
 }
