@@ -5,16 +5,25 @@ import (
 	"encoding/json"
 	log "github.com/golang/glog"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 	"xray-helper/common"
 )
 
 var CurrentXrayApp *XrayApp
+
+var PrefixTest = "009_test_"
+
+var PrefixProxy = "009_proxy_"
 
 type XrayApp struct {
 	config  common.XrayConfig
@@ -42,9 +51,110 @@ func (app *XrayApp) Start() error {
 		return err
 	}
 
+	err = app.TestAll()
+	if err != nil {
+		log.Errorf("test all config failed %v", err)
+	} else {
+		app.Restart()
+	}
+
 	return nil
 }
 
+func (app *XrayApp) TestAll() error {
+
+	costTimeMap := make(map[*V2Ray]int)
+
+	var wg sync.WaitGroup
+	resultCh := make(chan struct {
+		v    *V2Ray
+		cost int
+	}, len(app.V2Rays))
+
+	if len(app.V2Rays) != 0 {
+		for _, v := range app.V2Rays {
+			wg.Add(1)
+			go func(v *V2Ray) {
+				defer wg.Done()
+				cost := app.Test(v)
+				resultCh <- struct {
+					v    *V2Ray
+					cost int
+				}{v: v, cost: cost}
+			}(v)
+		}
+	}
+	go func() {
+		wg.Wait()
+		close(resultCh)
+	}()
+
+	for result := range resultCh {
+		costTimeMap[result.v] = result.cost
+	}
+
+	err := app.RemoveFiles(PrefixProxy)
+	if err != nil {
+		return err
+	}
+
+	var available []*V2Ray
+	for k, v := range costTimeMap {
+		if v > 0 {
+			available = append(available, k)
+		}
+	}
+
+	sort.Slice(available, func(i, j int) bool {
+		return costTimeMap[available[i]] < costTimeMap[available[j]]
+	})
+	if len(available) > 5 {
+		available = available[:5]
+	}
+	for _, v := range available {
+		err := app.V2rayToOutboundProxy(v)
+		if err != nil {
+			log.Errorf("V2rayToOutboundProxy error %v", err)
+			continue
+		}
+	}
+
+	return nil
+}
+
+func (app *XrayApp) Test(v *V2Ray) int {
+	proxyUrlStr := "http://127.0.0.1:" + strconv.Itoa(int(app.config.HttpPort))
+	proxyUrl, err := url.Parse(proxyUrlStr)
+	if err != nil {
+		log.Errorf("proxy url parse error %v", err)
+		return -1
+	}
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(proxyUrl),
+	}
+
+	client := &http.Client{
+		Transport: transport,
+	}
+	request, err := http.NewRequest("GET", "https://www.google.com", nil)
+	if err != nil {
+		log.Errorf("http NewRequest error %v", err)
+		return -1
+	}
+	request.Header.Set("source", v.ID)
+	now := time.Now().UnixMilli()
+	response, err := client.Do(request)
+	cost := time.Now().UnixMilli() - now
+	if err != nil {
+		log.Errorf("Id: %s call google filed  %v", v.ID, err)
+		return -1
+	}
+	if response.StatusCode != 200 {
+		log.Errorf("Id: %s StatusCode not 200  %v", v.ID, err)
+		return -1
+	}
+	return int(cost)
+}
 func (app *XrayApp) Run() error {
 	xrayExe := filepath.Join(app.config.XrayExeDir, "xray")
 	cmd := exec.Command(xrayExe, "run", "-confdir", app.config.XrayConfigDir)
@@ -438,7 +548,7 @@ func (app *XrayApp) InitApiConfig() error {
 func (app *XrayApp) Subscribe(isProxy bool) error {
 
 	subscribeUrl := app.config.SubscribeUrl
-	proxyUrl := "http://127.0.0.1:" + strconv.Itoa(int(app.config.TestPort))
+	proxyUrl := "http://127.0.0.1:" + strconv.Itoa(int(app.config.HttpPort))
 	if !isProxy {
 		proxyUrl = ""
 	}
@@ -496,40 +606,79 @@ func (app *XrayApp) RemoveFiles(prefix string) error {
 
 func (app *XrayApp) UpdateOutbound(v2rays []*V2Ray) error {
 
-	prefixTest := "009_test_"
-
-	prefixProxy := "009_proxy_"
-	err := app.RemoveFiles(prefixTest)
+	err := app.RemoveFiles(PrefixTest)
 	if err != nil {
 		return err
 	}
 
-	err = app.RemoveFiles(prefixProxy)
+	err = app.RemoveFiles(PrefixProxy)
 	if err != nil {
 		return err
 	}
 
 	for _, v := range v2rays {
-		outbound, err := v.TransferToOutbound("test_")
+		err := app.V2rayToOutbound(v)
 		if err != nil {
 			return err
-		}
-		data, err := json.Marshal(outbound)
-		if err != nil {
-			log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
-			continue
-		}
-		filePath := filepath.Join(app.config.XrayConfigDir, prefixTest+v.ID+".json")
-		err = writeToFile(string(data), filePath)
-		if err != nil {
-			log.Errorf("UpdateOutbound write to file failed, error: %v", err)
-			continue
 		}
 	}
 	return err
 }
 
-// 更新路由规则
+func (app *XrayApp) V2rayToOutbound(v *V2Ray) error {
+	err := app.V2rayToOutboundTest(v)
+	if err != nil {
+		return err
+	}
+	err = app.V2rayToOutboundProxy(v)
+	if err != nil {
+		return err
+	}
+	return nil
+
+}
+
+func (app *XrayApp) V2rayToOutboundProxy(v *V2Ray) error {
+	outboundProxy, err := v.TransferToOutbound("proxy_")
+	if err != nil {
+		return err
+	}
+	dataProxy, err := json.Marshal(outboundProxy)
+	if err != nil {
+		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
+		return err
+	}
+	filePathProxy := filepath.Join(app.config.XrayConfigDir, PrefixProxy+v.ID+".json")
+	err = writeToFile(string(dataProxy), filePathProxy)
+	if err != nil {
+		log.Errorf("UpdateOutbound write to file failed, error: %v", err)
+		return err
+	}
+	return nil
+
+}
+
+func (app *XrayApp) V2rayToOutboundTest(v *V2Ray) error {
+	outboundTest, err := v.TransferToOutbound("test_")
+	if err != nil {
+		return err
+	}
+	dataTest, err := json.Marshal(outboundTest)
+	if err != nil {
+		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
+		return err
+	}
+	filePath := filepath.Join(app.config.XrayConfigDir, PrefixTest+v.ID+".json")
+	err = writeToFile(string(dataTest), filePath)
+	if err != nil {
+		log.Errorf("UpdateOutbound write to file failed, error: %v", err)
+		return err
+	}
+	return nil
+
+}
+
+// UpdateRoutingRule 更新路由规则
 func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 	fileName := "006route.json"
 	filePath := filepath.Join(app.config.XrayConfigDir, fileName)
@@ -570,7 +719,7 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
     "protocol": [],
     "attrs": {
         ":method": "GET",
-        ":path": "/test/{{.}}"
+        "source": "{{.}}"
     },
     "outboundTag": "test_{{.}}"
 }
@@ -607,6 +756,20 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 	}
 	return nil
 
+}
+
+func (app *XrayApp) Restart() error {
+	if app.Process != nil {
+		err := app.Process.Kill()
+		if err != nil {
+			log.Errorf("process kill filed %d", app.Process.Pid)
+		}
+	}
+	err := app.Run()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func readFromFile(path string) string {
