@@ -177,7 +177,7 @@ type OutboundObject struct {
 	Protocol       string         `json:"protocol"`
 	Settings       Settings       `json:"settings,omitempty"`
 	StreamSettings StreamSettings `json:"streamSettings,omitempty"`
-	ProxySettings  ProxySettings  `json:"proxySettings,omitempty"`
+	ProxySettings  ProxySettings  `json:"-"`
 	Mux            Mux            `json:"mux,omitempty"`
 	Balancers      []string       `json:"-"`
 }

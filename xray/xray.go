@@ -149,7 +149,7 @@ func (app *XrayApp) Test(v *V2Ray) int {
 	client := &http.Client{
 		Transport: transport,
 	}
-	request, err := http.NewRequest("GET", "https://www.google.com", nil)
+	request, err := http.NewRequest("GET", "http://www.google.com", nil)
 	if err != nil {
 		log.Errorf("http NewRequest error %v", err)
 		return -1
@@ -680,7 +680,10 @@ func (app *XrayApp) V2rayToOutboundProxy(v *V2Ray) error {
 	if err != nil {
 		return err
 	}
-	dataProxy, err := json.MarshalIndent(outboundProxy, "", "    ")
+	m := map[string]interface{}{
+		"outbounds": []OutboundObject{outboundProxy},
+	}
+	dataProxy, err := json.MarshalIndent(m, "", "    ")
 	if err != nil {
 		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 		return err
@@ -700,7 +703,10 @@ func (app *XrayApp) V2rayToOutboundTest(v *V2Ray) error {
 	if err != nil {
 		return err
 	}
-	dataTest, err := json.MarshalIndent(outboundTest, "", "    ")
+	m := map[string]interface{}{
+		"outbounds": []OutboundObject{outboundTest},
+	}
+	dataTest, err := json.MarshalIndent(m, "", "    ")
 	if err != nil {
 		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 		return err
