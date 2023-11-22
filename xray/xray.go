@@ -1,8 +1,10 @@
 package xray
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	log "github.com/golang/glog"
 	"io"
 	"net/http"
@@ -78,12 +80,16 @@ func (app *XrayApp) TestAll() error {
 		cost int
 	}, len(app.V2Rays))
 
+	s := app.V2Rays
+	// todo 删除
+	s = s[1:2]
 	if len(app.V2Rays) != 0 {
-		for _, v := range app.V2Rays {
+		for _, v := range s {
 			wg.Add(1)
 			go func(v *V2Ray) {
 				defer wg.Done()
 				cost := app.Test(v)
+				log.Infof("test complete: %s")
 				resultCh <- struct {
 					v    *V2Ray
 					cost int
@@ -130,7 +136,7 @@ func (app *XrayApp) TestAll() error {
 }
 
 func (app *XrayApp) Test(v *V2Ray) int {
-	proxyUrlStr := "http://127.0.0.1:" + strconv.Itoa(int(app.config.HttpPort))
+	proxyUrlStr := "http://127.0.0.1:" + strconv.Itoa(int(app.config.TestPort))
 	proxyUrl, err := url.Parse(proxyUrlStr)
 	if err != nil {
 		log.Errorf("proxy url parse error %v", err)
@@ -148,12 +154,13 @@ func (app *XrayApp) Test(v *V2Ray) int {
 		log.Errorf("http NewRequest error %v", err)
 		return -1
 	}
-	request.Header.Set("source", v.ID)
+	source := url.QueryEscape(v.GetTag("test_"))
+	request.Header.Set("source", source)
 	now := time.Now().UnixMilli()
 	response, err := client.Do(request)
 	cost := time.Now().UnixMilli() - now
 	if err != nil {
-		log.Errorf("Id: %s call google filed  %v", v.ID, err)
+		log.Errorf("Id: %s call google filed  %v", v.GetTag("test_"), err)
 		return -1
 	}
 	if response.StatusCode != 200 {
@@ -165,16 +172,25 @@ func (app *XrayApp) Test(v *V2Ray) int {
 func (app *XrayApp) Run() error {
 	xrayExe := filepath.Join(app.config.XrayExeDir, "xray")
 	cmd := exec.Command(xrayExe, "run", "-confdir", app.config.XrayConfigDir)
+	cmd.Env = append(os.Environ(), "XRAY_LOCATION_ASSET="+app.config.XrayAssetDir)
+	stdout, _ := cmd.StdoutPipe()
+	scanner := bufio.NewScanner(stdout)
+	go func() {
+		for scanner.Scan() {
+			log.Infof("stuout if xray ------- %s", scanner.Text())
+		}
+	}()
 	err := cmd.Start()
 	if err != nil {
 		return err
 	}
 	app.Process = cmd.Process
 
-	err = cmd.Wait()
-	if err != nil {
-		return err
+	time.Sleep(2 * time.Second)
+	if cmd.ProcessState.ExitCode() != -1 {
+		return errors.New("xray start failed")
 	}
+
 	return nil
 }
 
@@ -515,13 +531,20 @@ func (app *XrayApp) InitLogConfig() error {
 	data := `
 {
   "log": {
-    "access": "/var/log/Xray/access.log",
-    "error": "/var/log/Xray/error.log",
-    "loglevel": "info",
+    "access": "/tmp/log/Xray/access.log",
+    "error": "/tmp/log/Xray/error.log",
+    "loglevel": "debug",
     "dnsLog": true
   }
 }
 `
+	path := "/tmp/log/Xray/"
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		err := os.MkdirAll(path, 0755)
+		if err != nil {
+			return err
+		}
+	}
 	fileName := "002log.json"
 	filePath := filepath.Join(app.config.XrayConfigDir, fileName)
 	err := writeToFile(data, filePath)
@@ -657,12 +680,12 @@ func (app *XrayApp) V2rayToOutboundProxy(v *V2Ray) error {
 	if err != nil {
 		return err
 	}
-	dataProxy, err := json.Marshal(outboundProxy)
+	dataProxy, err := json.MarshalIndent(outboundProxy, "", "    ")
 	if err != nil {
 		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 		return err
 	}
-	filePathProxy := filepath.Join(app.config.XrayConfigDir, PrefixProxy+v.ID+".json")
+	filePathProxy := filepath.Join(app.config.XrayConfigDir, PrefixProxy+outboundProxy.Tag+".json")
 	err = writeToFile(string(dataProxy), filePathProxy)
 	if err != nil {
 		log.Errorf("UpdateOutbound write to file failed, error: %v", err)
@@ -677,12 +700,12 @@ func (app *XrayApp) V2rayToOutboundTest(v *V2Ray) error {
 	if err != nil {
 		return err
 	}
-	dataTest, err := json.Marshal(outboundTest)
+	dataTest, err := json.MarshalIndent(outboundTest, "", "    ")
 	if err != nil {
 		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 		return err
 	}
-	filePath := filepath.Join(app.config.XrayConfigDir, PrefixTest+v.ID+".json")
+	filePath := filepath.Join(app.config.XrayConfigDir, PrefixTest+outboundTest.Tag+".json")
 	err = writeToFile(string(dataTest), filePath)
 	if err != nil {
 		log.Errorf("UpdateOutbound write to file failed, error: %v", err)
@@ -734,9 +757,9 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
     "protocol": [],
     "attrs": {
         ":method": "GET",
-        "source": "{{.}}"
+        "source": "{{.Source}}"
     },
-    "outboundTag": "test_{{.}}"
+    "outboundTag": "{{.Tag}}"
 }
 `
 	t, err := template.New("rule update").Parse(templateText)
@@ -745,15 +768,21 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 	}
 	for _, v := range v2rays {
 		var buf bytes.Buffer
-		err := t.Execute(&buf, v.ID)
+		tag := v.GetTag("test_")
+		encodeTag := url.QueryEscape(tag)
+		m := map[string]string{
+			"Source": encodeTag,
+			"Tag":    tag,
+		}
+		err := t.Execute(&buf, m)
 		if err != nil {
-			log.Errorf("UpdateRoutingRule template execute failed,rule id: %v,error: %v", v.ID, err)
+			log.Errorf("UpdateRoutingRule template execute failed,rule id: %v,error: %v", tag, err)
 			continue
 		}
 		var r map[string]interface{}
 		err = json.Unmarshal(buf.Bytes(), &r)
 		if err != nil {
-			log.Errorf("UpdateRoutingRule json unmarshal failed,rule id: %v,error: %v", v.ID, err)
+			log.Errorf("UpdateRoutingRule json unmarshal failed,rule id: %v,error: %v", tag, err)
 			continue
 		}
 		finalRules = append(finalRules, r)
@@ -761,7 +790,7 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 
 	result["routing"].(map[string]interface{})["rules"] = finalRules
 
-	marshal, err := json.Marshal(result)
+	marshal, err := json.MarshalIndent(result, "", "    ")
 	if err != nil {
 		return err
 	}
@@ -825,7 +854,7 @@ func readFromFile(path string) string {
 
 func writeToFile(data string, path string) error {
 
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		return err
 	}

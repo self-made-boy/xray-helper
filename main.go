@@ -22,6 +22,7 @@ func main() {
 
 	err := start()
 	if err != nil {
+		log.Errorf("start failed %v", err)
 		panic(err)
 	}
 	destroy()

@@ -224,8 +224,22 @@ func (v *V2Ray) TransferToOutbound(prefix string) (OutboundObject, error) {
 }
 
 func (v *V2Ray) GetTag(prefix string) string {
+	tag := prefix + "-" + v.Ps
+	tag = strings.ReplaceAll(tag, " ", "")
+	tag = strings.ReplaceAll(tag, "：", "")
+	tag = strings.ReplaceAll(tag, "·", "")
+	tag = strings.ReplaceAll(tag, "\\", "")
+	tag = strings.ReplaceAll(tag, "/", "")
+	tag = strings.ReplaceAll(tag, ":", "")
+	tag = strings.ReplaceAll(tag, "*", "")
+	tag = strings.ReplaceAll(tag, "?", "")
+	tag = strings.ReplaceAll(tag, "\"", "")
+	tag = strings.ReplaceAll(tag, "'", "")
+	tag = strings.ReplaceAll(tag, ">", "")
+	tag = strings.ReplaceAll(tag, "<", "")
+	tag = strings.ReplaceAll(tag, "|", "")
 
-	return prefix + "-" + v.ID
+	return tag
 }
 
 func ParseVmessURL(vmess string) (data *V2Ray, err error) {

@@ -35,6 +35,7 @@ type XrayConfig struct {
 	TestPort          uint16   `json:"testPort" yaml:"testPort"`
 	XrayExeDir        string   `json:"xrayExeDir" yaml:"xrayExeDir"`
 	XrayConfigDir     string   `json:"xrayConfigDir" yaml:"xrayConfigDir"`
+	XrayAssetDir      string   `json:"xrayAssetDir" yaml:"xrayAssetDir"`
 	DomainWhitelist   []string `json:"domainWhitelist" yaml:"domainWhitelist"`
 	DomainBlacklist   []string `json:"domainBlacklist" yaml:"domainBlacklist"`
 	SubscribeUrl      string   `json:"subscribeUrl" yaml:"subscribeUrl"`
@@ -50,10 +51,17 @@ func (c *XrayConfig) Check() error {
 		c.SubscribeRetryNum = 3
 	}
 
+	if strings.TrimSpace(c.XrayConfigDir) == "" {
+		c.XrayConfigDir = "."
+	}
 	if strings.TrimSpace(c.Address) == "" {
 		homePathStr := os.Getenv("HOME")
 		defaultConfigDir := filepath.Join(homePathStr, ".config", "xray/conf")
 		c.XrayConfigDir = defaultConfigDir
+	}
+
+	if strings.TrimSpace(c.XrayAssetDir) == "" {
+		c.XrayAssetDir = c.XrayConfigDir
 	}
 
 	if c.ApiPort == 0 {
@@ -65,6 +73,10 @@ func (c *XrayConfig) Check() error {
 	}
 	if c.SocksPort == 0 {
 		c.SocksPort = 10902
+	}
+
+	if c.TestPort == 0 {
+		c.TestPort = 10903
 	}
 
 	return nil
