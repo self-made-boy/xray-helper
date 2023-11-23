@@ -435,7 +435,7 @@ func (app *XrayApp) InitInboundConfig() error {
 {
     "inbounds": [
       {
-        "listen": "127.0.0.1",
+        "listen": "0.0.0.0",
         "port": {{.SocksPort}},
         "protocol": "socks",
         "settings": {},
@@ -450,7 +450,7 @@ func (app *XrayApp) InitInboundConfig() error {
         }
       },
       {
-        "listen": "127.0.0.1",
+        "listen": "0.0.0.0",
         "port": {{.HttpPort}},
         "protocol": "http",
         "settings": {},

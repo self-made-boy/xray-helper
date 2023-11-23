@@ -5,5 +5,5 @@ clean:
 release:
 	GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o build/xray-helper
 docker:
-	docker build -t xray-helper build/.
+	docker build -t xray-helper:1.0 build/.
 image: clean release docker
