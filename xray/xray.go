@@ -277,8 +277,6 @@ func (app *XrayApp) InitRouteConfig() error {
 {{range .DomainWhitelist}}
                     "{{.}}",
 {{end}}
-                    "geosite:apple-cn",
-                    "geosite:google-cn",
                     "geosite:cn",
                     "geosite:geolocation-cn"
                 ],

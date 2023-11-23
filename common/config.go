@@ -100,6 +100,7 @@ func ReadConfig() (*Config, error) {
 	defaultConfigPath := filepath.Join(homePathStr, ".config", "xray/helper.yaml")
 	var configPath string
 	flag.StringVar(&configPath, "config", defaultConfigPath, "config file path")
+	flag.Parse()
 
 	log.Infof("config path is '%v'", configPath)
 	dir := filepath.Dir(configPath)

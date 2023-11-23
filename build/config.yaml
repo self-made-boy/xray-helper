@@ -1,0 +1,17 @@
+xrayConfig:
+  address: 127.0.0.1
+  apiPort: 10900
+  httpPort: 10901
+  socksPort: 10902
+  testPort: 10903
+  xrayExeDir: /root/app/xray
+  xrayConfigDir: /root/app/xray/conf
+  xrayAssetDir: /root/app/xray/share
+  domainWhitelist:
+    - baidu.com
+  DomainBlacklist:
+    - google.com
+  subscribeUrl: https://xxxx/link/xxx
+  subscribeRetryNum: 3
+serverConfig:
+  port: 20909
