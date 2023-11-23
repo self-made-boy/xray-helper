@@ -15,6 +15,21 @@ docker run \
 
 ```
 
+window
+```shell
+set GOOS=linux
+set GOARCH=amd64 
+go build -ldflags "-s -w" -o build/xray-helper
+
+docker run `
+-p 10901:10901 `
+-p 10902:10902 `
+-p 20909:20909 `
+-v c:/Users/xx/.config/xray:/root/app/xray/helper/conf `
+-d xray-helper:1.0 "-config=/root/app/xray/helper/conf/helper.yaml"
+
+```
+
 log dir
 ```shell
 /tmp/log/Xray/
