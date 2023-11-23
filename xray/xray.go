@@ -31,6 +31,9 @@ type XrayApp struct {
 	config  common.XrayConfig
 	Process *os.Process
 	V2Rays  []*V2Ray
+	testMu  sync.Mutex
+	startMu sync.Mutex
+	killMu  sync.Mutex
 }
 
 func NewXrayApp(config common.XrayConfig) *XrayApp {
@@ -54,6 +57,11 @@ func (app *XrayApp) Start() error {
 }
 
 func (app *XrayApp) DoStart() error {
+	locked := app.startMu.TryLock()
+	if !locked {
+		return nil
+	}
+	defer app.startMu.Unlock()
 	err := app.InitConfig()
 	if err != nil {
 		return err
@@ -71,6 +79,11 @@ func (app *XrayApp) DoStart() error {
 }
 
 func (app *XrayApp) TestAll() error {
+	locked := app.testMu.TryLock()
+	if !locked {
+		return nil
+	}
+	defer app.testMu.Unlock()
 
 	costTimeMap := make(map[*V2Ray]int)
 
@@ -81,15 +94,19 @@ func (app *XrayApp) TestAll() error {
 	}, len(app.V2Rays))
 
 	s := app.V2Rays
-	// todo 删除
-	s = s[1:2]
 	if len(app.V2Rays) != 0 {
 		for _, v := range s {
+
 			wg.Add(1)
 			go func(v *V2Ray) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Errorf("test timeout: %v", r)
+					}
+				}()
 				defer wg.Done()
 				cost := app.Test(v)
-				log.Infof("test complete: %s")
+				log.Infof("test complete, %v:%v", v.Ps, cost)
 				resultCh <- struct {
 					v    *V2Ray
 					cost int
@@ -97,8 +114,25 @@ func (app *XrayApp) TestAll() error {
 			}(v)
 		}
 	}
+
 	go func() {
-		wg.Wait()
+		timeout := time.After(20 * time.Second)
+		// 这是一个用于等待所有goroutine完成的channel
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		// 使用一个select语句来等待done或timeout信号
+		select {
+		case <-done:
+		// 如果done channel关闭，那么这个case变为可选择的，这表明所有的任务已经完成
+		case <-timeout:
+			// 如果从timeout channel中接收到值，那么这个case变为可选择的，这表明已经超时
+			log.Infof("timed out waiting for test tasks to finish")
+		}
+
+		// 不论是所有任务已经完成，还是已经超时，我们都关闭resultCh，以便于接收结果的goroutine可以结束
 		close(resultCh)
 	}()
 
@@ -149,22 +183,23 @@ func (app *XrayApp) Test(v *V2Ray) int {
 	client := &http.Client{
 		Transport: transport,
 	}
-	request, err := http.NewRequest("GET", "http://www.google.com", nil)
+	request, err := http.NewRequest("GET", "http://www.google.com/ncr", nil)
 	if err != nil {
 		log.Errorf("http NewRequest error %v", err)
 		return -1
 	}
 	source := url.QueryEscape(v.GetTag("test_"))
 	request.Header.Set("source", source)
+
 	now := time.Now().UnixMilli()
 	response, err := client.Do(request)
 	cost := time.Now().UnixMilli() - now
 	if err != nil {
-		log.Errorf("Id: %s call google filed  %v", v.GetTag("test_"), err)
+		log.Errorf("test failed: %s call google filed  %v", v.GetTag("test_"), err)
 		return -1
 	}
-	if response.StatusCode != 200 {
-		log.Errorf("Id: %s StatusCode not 200  %v", v.ID, err)
+	if response.StatusCode < 200 || response.StatusCode >= 400 {
+		log.Errorf("test failed: %s StatusCode is %v ", v.GetTag("test_"), response.StatusCode)
 		return -1
 	}
 	return int(cost)
@@ -238,21 +273,27 @@ func (app *XrayApp) InitRouteConfig() error {
         "rules": [
             {
                 "type": "field",
-                "inboundTag": [
-                    "api"
-                ],
-                "outboundTag": "api"
-            },
-            {
-                "type": "field",
                 "domain": [
 {{range .DomainWhitelist}}
                     "{{.}}",
 {{end}}
                     "geosite:apple-cn",
                     "geosite:google-cn",
-                    "geosite:cn"
+                    "geosite:cn",
+                    "geosite:geolocation-cn"
                 ],
+                "ip": [],
+                "network": "tcp",
+                "source": [],
+                "user": [],
+                "inboundTag": ["inbounds-socks","inbounds-http"],
+                "protocol": [],
+                "attrs": {},
+                "outboundTag": "direct"
+            },
+            {
+                "type": "field",
+                "domain": [],
                 "ip": [
                     "0.0.0.0/8",
                     "10.0.0.0/8",
@@ -275,6 +316,44 @@ func (app *XrayApp) InitRouteConfig() error {
             {
                 "type": "field",
                 "domain": [
+{{range .DomainBlacklist}}
+                    "{{.}}",
+{{end}}
+                    "geosite:geolocation-!cn"
+                ],
+                "ip": [],
+                "network": "tcp",
+                "source": [],
+                "user": [],
+                "inboundTag": ["inbounds-socks","inbounds-http"],
+                "protocol": [],
+                "attrs": {},
+                "balancerTag": "proxy-balancer"
+            },
+            {
+                "type": "field",
+                "domain": [],
+                "ip": [
+                    "geoip:!cn"
+                ],
+                "network": "tcp",
+                "source": [],
+                "user": [],
+                "inboundTag": ["inbounds-socks","inbounds-http"],
+                "protocol": [],
+                "attrs": {},
+                "balancerTag": "proxy-balancer"
+            },
+            {
+                "type": "field",
+                "inboundTag": [
+                    "api"
+                ],
+                "outboundTag": "api"
+            },
+            {
+                "type": "field",
+                "domain": [
                     "geosite:category-ads",
                     "geosite:category-ads-all"
                 ],
@@ -286,25 +365,6 @@ func (app *XrayApp) InitRouteConfig() error {
                 "protocol": [],
                 "attrs": {},
                 "outboundTag": "blocked"
-            },
-            {
-                "type": "field",
-                "domain": [
-{{range .DomainBlacklist}}
-                    "{{.}}",
-{{end}}
-                    "geosite:geolocation-!cn"
-                ],
-                "ip": [
-                    "geoip:!cn"
-                ],
-                "network": "tcp",
-                "source": [],
-                "user": [],
-                "inboundTag": ["inbounds-socks","inbounds-http"],
-                "protocol": [],
-                "attrs": {},
-                "balancerTag": "proxy-balancer"
             }
         ],
         "balancers": [
@@ -688,7 +748,7 @@ func (app *XrayApp) V2rayToOutboundProxy(v *V2Ray) error {
 		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 		return err
 	}
-	filePathProxy := filepath.Join(app.config.XrayConfigDir, PrefixProxy+outboundProxy.Tag+".json")
+	filePathProxy := filepath.Join(app.config.XrayConfigDir, PrefixProxy+outboundProxy.Tag+"_tail.json")
 	err = writeToFile(string(dataProxy), filePathProxy)
 	if err != nil {
 		log.Errorf("UpdateOutbound write to file failed, error: %v", err)
@@ -711,7 +771,7 @@ func (app *XrayApp) V2rayToOutboundTest(v *V2Ray) error {
 		log.Errorf("UpdateOutbound json Marshal failed, error: %v", err)
 		return err
 	}
-	filePath := filepath.Join(app.config.XrayConfigDir, PrefixTest+outboundTest.Tag+".json")
+	filePath := filepath.Join(app.config.XrayConfigDir, PrefixTest+outboundTest.Tag+"_tail.json")
 	err = writeToFile(string(dataTest), filePath)
 	if err != nil {
 		log.Errorf("UpdateOutbound write to file failed, error: %v", err)
@@ -807,15 +867,38 @@ func (app *XrayApp) UpdateRoutingRule(v2rays []*V2Ray) error {
 	return nil
 
 }
-
-func (app *XrayApp) Restart(withInit bool) error {
+func (app *XrayApp) Kill() {
+	locked := app.killMu.TryLock()
+	if !locked {
+		return
+	}
+	defer app.killMu.Unlock()
 	if app.Process != nil {
 		err := app.Process.Kill()
 		if err != nil {
 			log.Errorf("process kill filed %d", app.Process.Pid)
 		}
 	}
+}
+func (app *XrayApp) TimeTest() {
+	go func() {
+		ticker := time.NewTicker(2 * time.Hour)
+		for range ticker.C {
+			log.Info("TimedTest executing...")
+			err := app.TestAll()
+			if err != nil {
+				return
+			}
+			app.Restart(false)
+		}
+	}()
+}
 
+func (app *XrayApp) Restart(withInit bool) error {
+
+	log.Infof("restarting...")
+
+	app.Kill()
 	if !withInit {
 		err := app.Run()
 		if err != nil {

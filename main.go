@@ -41,6 +41,7 @@ func start() error {
 		if e != nil {
 			c <- e
 		}
+		xrayApp.TimeTest()
 	}(errors)
 
 	go func(c chan<- error) {
